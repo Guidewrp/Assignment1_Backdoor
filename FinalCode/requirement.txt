@@ -1,0 +1,6 @@
+pynput
+pyaudio
+opencv-python
+Pillow
+python-dotenv
+numpy

